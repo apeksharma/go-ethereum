@@ -20,6 +20,7 @@ package eth
 import (
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/consensus/hcs"
 	"math/big"
 	"runtime"
 	"sync"
@@ -246,6 +247,9 @@ func CreateConsensusEngine(ctx *node.ServiceContext, chainConfig *params.ChainCo
 	if chainConfig.Clique != nil {
 		return clique.New(chainConfig.Clique, db)
 	}
+	if chainConfig.HCS != nil {
+		return hcs.New(chainConfig.HCS, db)
+	}
 	// Otherwise assume proof-of-work
 	switch config.PowMode {
 	case ethash.ModeFake:
@@ -361,7 +365,10 @@ func (s *Ethereum) Etherbase() (eb common.Address, err error) {
 			return etherbase, nil
 		}
 	}
-	return common.Address{}, fmt.Errorf("etherbase must be explicitly specified")
+	var bogusMinerEtherbase = common.HexToAddress("0x1234567890123456789012345678901234567890")
+	log.Info("Running with bogus miner etherbase", "address", bogusMinerEtherbase )
+	return bogusMinerEtherbase, nil
+	//return common.Address{}, fmt.Errorf("etherbase must be explicitly specified")
 }
 
 // isLocalBlock checks whether the specified block is mined

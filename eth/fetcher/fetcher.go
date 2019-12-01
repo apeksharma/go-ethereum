@@ -297,6 +297,7 @@ func (f *Fetcher) loop() {
 			// If too high up the chain or phase, continue later
 			number := op.block.NumberU64()
 			if number > height+1 {
+				log.Info("Future block, queuing", "blockNumber", number)
 				f.queue.Push(op, -int64(number))
 				if f.queueChangeHook != nil {
 					f.queueChangeHook(hash, true)
@@ -361,6 +362,7 @@ func (f *Fetcher) loop() {
 			f.forgetBlock(hash)
 
 		case <-fetchTimer.C:
+			// Q: what are block timers?
 			// At least one block's timer ran out, check for needing retrieval
 			request := make(map[string][]common.Hash)
 
@@ -397,7 +399,8 @@ func (f *Fetcher) loop() {
 			f.rescheduleFetch(fetchTimer)
 
 		case <-completeTimer.C:
-			// At least one header's timer ran out, retrieve everything
+			// Q: what are header timers?
+			// At least one header's timer ran out, retrieve everything.
 			request := make(map[string][]common.Hash)
 
 			for hash, announces := range f.fetched {
@@ -601,6 +604,8 @@ func (f *Fetcher) enqueue(peer string, block *types.Block) {
 
 	// Ensure the peer isn't DOSing us
 	count := f.queues[peer] + 1
+	// TODO: this limit is of concern when new node tries to catchup very old chain and relies on p2p for old blocks.
+	//   HCS sync up logic should not queue more than 1 future block
 	if count > blockLimit {
 		log.Debug("Discarded propagated block, exceeded allowance", "peer", peer, "number", block.Number(), "hash", hash, "limit", blockLimit)
 		propBroadcastDOSMeter.Mark(1)
