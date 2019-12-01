@@ -146,6 +146,8 @@ func (w *wizard) deployNode(boot bool) {
 					return
 				}
 			}
+		} else if w.conf.Genesis.Config.HCS != nil {
+			// TODO: ask for topic info, node for submitting messages to, and mirror node for subscribe messages from.
 		}
 		// Establish the gas dynamics to be enforced by the signer
 		fmt.Println()

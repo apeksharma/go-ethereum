@@ -54,7 +54,7 @@ var DefaultConfig = Config{
 		GasFloor: 8000000,
 		GasCeil:  8000000,
 		GasPrice: big.NewInt(params.GWei),
-		Recommit: 3 * time.Second,
+		Recommit: 20 * time.Second,
 	},
 	TxPool: core.DefaultTxPoolConfig,
 	GPO: gasprice.Config{
@@ -88,7 +88,7 @@ func init() {
 
 type Config struct {
 	// The genesis block, which is inserted if the database is empty.
-	// If nil, the Ethereum main net block is used.
+	// If nil, the HCS genesis block is used.
 	Genesis *core.Genesis `toml:",omitempty"`
 
 	// Protocol options

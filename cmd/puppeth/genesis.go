@@ -97,7 +97,7 @@ type alethGenesisSpecLinearPricing struct {
 // chain specification format.
 func newAlethGenesisSpec(network string, genesis *core.Genesis) (*alethGenesisSpec, error) {
 	// Only ethash is currently supported between go-ethereum and aleth
-	if genesis.Config.Ethash == nil {
+	if genesis.Config.Ethash == nil {  // No changes to this since we don't have hcs support for aleth yet.
 		return nil, errors.New("unsupported consensus engine")
 	}
 	// Reconstruct the chain spec in Aleth format
@@ -352,7 +352,7 @@ type parityChainSpecBlakePricing struct {
 // chain specification format.
 func newParityChainSpec(network string, genesis *core.Genesis, bootnodes []string) (*parityChainSpec, error) {
 	// Only ethash is currently supported between go-ethereum and Parity
-	if genesis.Config.Ethash == nil {
+	if genesis.Config.Ethash == nil {  // No changes to this since we don't have hcs support for parity yet.
 		return nil, errors.New("unsupported consensus engine")
 	}
 	// Reconstruct the chain spec in Parity's format
@@ -540,7 +540,7 @@ type pyEthereumGenesisSpec struct {
 // chain specification format.
 func newPyEthereumGenesisSpec(network string, genesis *core.Genesis) (*pyEthereumGenesisSpec, error) {
 	// Only ethash is currently supported between go-ethereum and pyethereum
-	if genesis.Config.Ethash == nil {
+	if genesis.Config.Ethash == nil {  // No changes to this since we don't have hcs support for pyehtereum yet.
 		return nil, errors.New("unsupported consensus engine")
 	}
 	spec := &pyEthereumGenesisSpec{

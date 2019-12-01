@@ -19,7 +19,11 @@ package miner
 import (
 	"bytes"
 	"errors"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/rlp"
 	"math/big"
+	"net/http"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -62,7 +66,7 @@ const (
 
 	// maxRecommitInterval is the maximum time interval to recreate the mining block with
 	// any newly arrived transactions.
-	maxRecommitInterval = 15 * time.Second
+	maxRecommitInterval = 25 * time.Second
 
 	// intervalAdjustRatio is the impact a single interval adjustment has on sealing work
 	// resubmitting interval.
@@ -588,30 +592,43 @@ func (w *worker) resultLoop() {
 				}
 				logs = append(logs, receipt.Logs...)
 			}
-			// Commit block and state to database.
-			stat, err := w.chain.WriteBlockWithState(block, receipts, task.state)
-			if err != nil {
-				log.Error("Failed writing block to chain", "err", err)
-				continue
+
+			if encodedBlock, err := rlp.EncodeToBytes(block); err != nil {
+				log.Error("Failed encoding block", "err", err)
+			} else {
+				_, err := http.PostForm("http://127.0.0.1:5000/submitMessage", url.Values{"message": {hexutil.Encode(encodedBlock)} })
+				if err != nil {
+					log.Error("Error submitting block to HCS", "err", err)
+				} else {
+					log.Info("Sent new block to HCS", "number", block.Number(), "sealhash", sealhash, "hash", hash,
+						"elapsed", common.PrettyDuration(time.Since(task.createdAt)))
+				}
 			}
-			log.Info("Successfully sealed new block", "number", block.Number(), "sealhash", sealhash, "hash", hash,
-				"elapsed", common.PrettyDuration(time.Since(task.createdAt)))
+			// TODO: we don't want to write any block to chain unless it is received as first block from HCS.
+			// Commit block and state to database.
+			//stat, err := w.chain.WriteBlockWithState(block, receipts, task.state)
+			//if err != nil {
+			//	log.Error("Failed writing block to chain", "err", err)
+			//	continue
+			//}
+			//log.Info("Successfully sealed new block", "number", block.Number(), "sealhash", sealhash, "hash", hash,
+			//	"elapsed", common.PrettyDuration(time.Since(task.createdAt)))
 
 			// Broadcast the block and announce chain insertion event
-			w.mux.Post(core.NewMinedBlockEvent{Block: block})
+			//w.mux.Post(core.NewMinedBlockEvent{Block: block})
 
-			var events []interface{}
-			switch stat {
-			case core.CanonStatTy:
-				events = append(events, core.ChainEvent{Block: block, Hash: block.Hash(), Logs: logs})
-				events = append(events, core.ChainHeadEvent{Block: block})
-			case core.SideStatTy:
-				events = append(events, core.ChainSideEvent{Block: block})
-			}
-			w.chain.PostChainEvents(events, logs)
-
-			// Insert the block into the set of pending ones to resultLoop for confirmations
-			w.unconfirmed.Insert(block.NumberU64(), block.Hash())
+			//var events []interface{}
+			//switch stat {
+			//case core.CanonStatTy:
+			//	events = append(events, core.ChainEvent{Block: block, Hash: block.Hash(), Logs: logs})
+			//	events = append(events, core.ChainHeadEvent{Block: block})
+			//case core.SideStatTy:
+			//	events = append(events, core.ChainSideEvent{Block: block})
+			//}
+			//w.chain.PostChainEvents(events, logs)
+			//
+			//// Insert the block into the set of pending ones to resultLoop for confirmations
+			//w.unconfirmed.Insert(block.NumberU64(), block.Hash())
 
 		case <-w.exitCh:
 			return
@@ -850,7 +867,8 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 	header := &types.Header{
 		ParentHash: parent.Hash(),
 		Number:     num.Add(num, common.Big1),
-		GasLimit:   core.CalcGasLimit(parent, w.config.GasFloor, w.config.GasCeil),
+		GasLimit:   1000000,
+		//GasLimit:   core.CalcGasLimit(parent, w.config.GasFloor, w.config.GasCeil),
 		Extra:      w.extra,
 		Time:       uint64(timestamp),
 	}
@@ -915,21 +933,25 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 	commitUncles(w.localUncles)
 	commitUncles(w.remoteUncles)
 
-	if !noempty {
-		// Create an empty block based on temporary copied state for sealing in advance without waiting block
-		// execution finished.
-		w.commit(uncles, nil, false, tstart)
-	}
+	// HCS: If this code block is not commented out, and if there are transactions in the pool, then the call to
+	// commit here and in the end of this function will result in to blocks being pushed to HCS for same blockNumber.
+	//if !noempty {
+	//	// Create an empty block based on temporary copied state for sealing in advance without waiting block
+	//	// execution finished.
+	//	w.commit(uncles, nil, false, tstart)
+	//}
 
 	// Fill the block with all available pending transactions.
 	pending, err := w.eth.TxPool().Pending()
 	if err != nil {
 		log.Error("Failed to fetch pending transactions", "err", err)
+		w.commit(uncles, nil, false, tstart)
 		return
 	}
 	// Short circuit if there is no available pending transactions
 	if len(pending) == 0 {
 		w.updateSnapshot()
+		w.commit(uncles, nil, false, tstart)
 		return
 	}
 	// Split the pending transactions into locals and remotes
@@ -943,12 +965,14 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 	if len(localTxs) > 0 {
 		txs := types.NewTransactionsByPriceAndNonce(w.current.signer, localTxs)
 		if w.commitTransactions(txs, w.coinbase, interrupt) {
+			w.commit(uncles, nil, false, tstart)
 			return
 		}
 	}
 	if len(remoteTxs) > 0 {
 		txs := types.NewTransactionsByPriceAndNonce(w.current.signer, remoteTxs)
 		if w.commitTransactions(txs, w.coinbase, interrupt) {
+			w.commit(uncles, nil, false, tstart)
 			return
 		}
 	}

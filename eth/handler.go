@@ -20,8 +20,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"io/ioutil"
 	"math"
 	"math/big"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -136,7 +139,7 @@ func NewProtocolManager(config *params.ChainConfig, checkpoint *params.TrustedCh
 			log.Warn("Switch sync mode from fast sync to full sync")
 		} else {
 			// If fast sync was requested and our database is empty, grant it
-			manager.fastSync = uint32(1)
+			//manager.fastSync = uint32(1)
 		}
 	}
 	// If we have trusted checkpoints, enforce them on the chain
@@ -189,7 +192,66 @@ func NewProtocolManager(config *params.ChainConfig, checkpoint *params.TrustedCh
 	}
 	manager.fetcher = fetcher.New(blockchain.GetBlockByHash, validator, manager.BroadcastBlock, heighter, inserter, manager.removePeer)
 
+	go func() {
+		timerDuration := 1 * time.Second
+		timer := time.NewTimer(timerDuration)
+		afterTimestamp := "0"
+		for {
+			select {
+			case <-timer.C:
+				resp, err := http.Get("http://127.0.0.1:5000/getMessage?after_timestamp=" + afterTimestamp)
+				if err != nil {
+					log.Error("Failed getting blocks from HCS", "err", err)
+				} else {
+					body, err := ioutil.ReadAll(resp.Body)
+					if err != nil {
+						log.Error("Failed reading body of response", "err", err, "response", resp)
+					}
+					resp.Body.Close()
+					msg := GetMessageResponse{}
+					if err := json.Unmarshal(body, &msg); err != nil {
+						log.Error("Failed json decoding body", "err", err, "body", body)
+					}
+					if msg.Message == "" {
+						log.Info("No new blocks from HCS")
+					} else {
+						var bytes []byte
+						if bytes, err = hexutil.Decode(msg.Message); err != nil {
+							log.Error("Error decoding message to bytes", "err", err)
+						}
+						var block types.Block
+						if err := rlp.DecodeBytes(bytes, &block);  err != nil {
+							log.Error("Error RLP decoding bytes to block", "err", err)
+						}
+						var currentChainHeight = blockchain.CurrentBlock().NumberU64()
+						var hcsBlockNumber = block.NumberU64()
+						// TODO: fix race condition. If two blocks with same numbers are received quickly, since
+						//  insertion happens async, condition here to avoid uncles won't be enough.
+						if currentChainHeight >= hcsBlockNumber {
+							log.Info("HCS: block at number exists locally, skipping", "blockNumber",
+								hcsBlockNumber, "hcsBlockHash", block.Hash(), "localBlockHash",
+								blockchain.GetBlockByNumber(hcsBlockNumber).Hash())
+						} else if hcsBlockNumber > currentChainHeight + 1 {
+							log.Info("HCS: Block from HCS is in future, will retry", "hcsBlockNumber",
+								hcsBlockNumber, "chainHeight", currentChainHeight)
+						} else {
+							log.Info("Received block from HCS", "blockNumber", hcsBlockNumber)
+							manager.fetcher.Enqueue("HCS", &block)
+						}
+						afterTimestamp = msg.Timestamp
+					}
+				}
+			}
+			timer.Reset(timerDuration)
+		}
+	}()
+
 	return manager, nil
+}
+
+type GetMessageResponse struct {
+	Timestamp string
+	Message string
 }
 
 func (pm *ProtocolManager) makeProtocol(version uint) p2p.Protocol {
@@ -661,6 +723,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			log.Debug("Failed to deliver receipts", "err", err)
 		}
 
+		// TODO: remove p2p for new blocks?
 	case msg.Code == NewBlockHashesMsg:
 		var announces newBlockHashesData
 		if err := msg.Decode(&announces); err != nil {
@@ -743,6 +806,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 
 // BroadcastBlock will either propagate a block to a subset of it's peers, or
 // will only announce it's availability (depending what's requested).
+// TODO: disable this? since the only source of block should be HCS? Remove p2p for new blocks
 func (pm *ProtocolManager) BroadcastBlock(block *types.Block, propagate bool) {
 	hash := block.Hash()
 	peers := pm.peers.PeersWithoutBlock(hash)
@@ -801,6 +865,7 @@ func (pm *ProtocolManager) BroadcastTxs(txs types.Transactions) {
 }
 
 // Mined broadcast loop
+// Send to other nodes via p2p
 func (pm *ProtocolManager) minedBroadcastLoop() {
 	// automatically stops if unsubscribe
 	for obj := range pm.minedBlockSub.Chan() {

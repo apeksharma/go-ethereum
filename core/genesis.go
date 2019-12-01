@@ -163,8 +163,10 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, override
 	stored := rawdb.ReadCanonicalHash(db, 0)
 	if (stored == common.Hash{}) {
 		if genesis == nil {
-			log.Info("Writing default main-net genesis block")
-			genesis = DefaultGenesisBlock()
+			//log.Info("Writing default main-net genesis block")
+			//genesis = DefaultGenesisBlock()
+			log.Info("Writing default HCS genesis block")
+			genesis = HCSGenesisBlock()
 		} else {
 			log.Info("Writing custom genesis block")
 		}
@@ -180,7 +182,8 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, override
 	header := rawdb.ReadHeader(db, stored, 0)
 	if _, err := state.New(header.Root, state.NewDatabaseWithCache(db, 0)); err != nil {
 		if genesis == nil {
-			genesis = DefaultGenesisBlock()
+			//genesis = DefaultGenesisBlock()
+			genesis = HCSGenesisBlock()
 		}
 		// Ensure the stored genesis matches with the given one.
 		hash := genesis.ToBlock(nil).Hash()
@@ -219,7 +222,8 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, override
 	// Special case: don't change the existing config of a non-mainnet chain if no new
 	// config is supplied. These chains would get AllProtocolChanges (and a compat error)
 	// if we just continued here.
-	if genesis == nil && stored != params.MainnetGenesisHash {
+	//if genesis == nil && stored != params.MainnetGenesisHash {
+	if genesis == nil && stored != params.HCSGenesisHash {
 		return storedcfg, stored, nil
 	}
 
@@ -241,6 +245,8 @@ func (g *Genesis) configOrDefault(ghash common.Hash) *params.ChainConfig {
 	switch {
 	case g != nil:
 		return g.Config
+	case ghash == params.HCSGenesisHash:
+		return params.HCSChainConfig
 	case ghash == params.MainnetGenesisHash:
 		return params.MainnetChainConfig
 	case ghash == params.TestnetGenesisHash:
@@ -330,6 +336,24 @@ func (g *Genesis) MustCommit(db ethdb.Database) *types.Block {
 func GenesisBlockForTesting(db ethdb.Database, addr common.Address, balance *big.Int) *types.Block {
 	g := Genesis{Alloc: GenesisAlloc{addr: {Balance: balance}}}
 	return g.MustCommit(db)
+}
+
+// DefaultGenesisBlock returns the Ethereum main net genesis block.
+func HCSGenesisBlock() *Genesis {
+	return &Genesis{ // TODO: better default values
+		Config:     params.HCSChainConfig,
+		Nonce:      66,
+		ExtraData:  nil,
+		GasLimit:   5000,
+		Difficulty: big.NewInt(0),
+		Alloc:      getHCSGenesisAlloc(),
+	}
+}
+
+func getHCSGenesisAlloc() GenesisAlloc {
+	ga := make(GenesisAlloc, 1)
+	ga[common.HexToAddress("0x9d5E65E15Aa1D981ED829a8cd8090F5Db92cE600")] = GenesisAccount{Balance: big.NewInt(4000000000000000000)}
+	return ga
 }
 
 // DefaultGenesisBlock returns the Ethereum main net genesis block.
