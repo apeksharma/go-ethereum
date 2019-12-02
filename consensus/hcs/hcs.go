@@ -4,6 +4,7 @@ package hcs
 
 import (
 	"errors"
+	"fmt"
 	"math/big"
 	"time"
 
@@ -30,6 +31,7 @@ var (
 // codebase, inherently breaking if the engine is swapped out. Please put common
 // error types into the consensus package.
 var (
+	errZeroBlockTime     = errors.New("timestamp equals parent's")
 	// errUnknownBlock is returned when the list of signers is requested for a block
 	// that is not part of the local blockchain.
 	errUnknownBlock = errors.New("unknown block")
@@ -59,11 +61,20 @@ func New(config *params.HCSConfig, db ethdb.Database) *HCS {
 
 // Author implements consensus.Engine. TODO: can use this field for some kind of full node identification information.
 func (hcs *HCS) Author(header *types.Header) (common.Address, error) {
-	return common.Address{}, nil
+	return header.Coinbase, nil
 }
 
 // VerifyHeader checks whether a header conforms to the consensus rules.
 func (hcs *HCS) VerifyHeader(chain consensus.ChainReader, header *types.Header, seal bool) error {
+	// Short circuit if the header is known, or its parent not
+	number := header.Number.Uint64()
+	if chain.GetHeader(header.Hash(), number) != nil {
+		return nil
+	}
+	parent := chain.GetHeader(header.ParentHash, number-1)
+	if parent == nil {
+		return consensus.ErrUnknownAncestor
+	}
 	return hcs.verifyHeader(chain, header, nil)
 }
 
@@ -93,6 +104,10 @@ func (hcs *HCS) VerifyHeaders(chain consensus.ChainReader, headers []*types.Head
 // looking those up from the database. This is useful for concurrently verifying
 // a batch of new headers.
 func (hcs *HCS) verifyHeader(chain consensus.ChainReader, header *types.Header, parents []*types.Header) error {
+	// Ensure that the header's extra-data section is of a reasonable size
+	if uint64(len(header.Extra)) > params.MaximumExtraDataSize {
+		return fmt.Errorf("extra-data too long: %d > %d", len(header.Extra), params.MaximumExtraDataSize)
+	}
 	if header.Number == nil {
 		return errUnknownBlock
 	}
@@ -139,6 +154,9 @@ func (hcs *HCS) verifyCascadingFields(chain consensus.ChainReader, header *types
 	} else {
 		parent = chain.GetHeader(header.ParentHash, number-1)
 	}
+	if header.Time <= parent.Time {
+		return errZeroBlockTime
+	}
 	if parent == nil || parent.Number.Uint64() != number-1 || parent.Hash() != header.ParentHash {
 		return consensus.ErrUnknownAncestor
 	}
@@ -167,14 +185,10 @@ func (hcs *HCS) verifySeal(chain consensus.ChainReader, header *types.Header, pa
 // Prepare implements consensus.Engine, preparing all the consensus fields of the
 // header for running the transactions on top.
 func (hcs *HCS) Prepare(chain consensus.ChainReader, header *types.Header) error {
-	header.Coinbase = common.Address{}
-	header.Nonce = types.BlockNonce{}
-
 	number := header.Number.Uint64()
 	// Set the correct difficulty
 	parent := chain.GetHeader(header.ParentHash, number-1)
 	header.Difficulty = hcs.CalcDifficulty(chain, header.Time, parent)
-	header.Extra = nil
 	// Mix digest is reserved for now, set to empty
 	header.MixDigest = common.Hash{}
 
@@ -193,6 +207,7 @@ func (hcs *HCS) Prepare(chain consensus.ChainReader, header *types.Header) error
 func (hcs *HCS) Finalize(chain consensus.ChainReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header) {
 	// No block rewards in PoA, so the state remains as is and uncles are dropped
 	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
+	log.Info("FINALIZE", "blockNumber", header.Number.Uint64(), "stateRoot", header.Root)
 	header.UncleHash = types.CalcUncleHash(nil)
 }
 
@@ -201,6 +216,7 @@ func (hcs *HCS) Finalize(chain consensus.ChainReader, header *types.Header, stat
 func (hcs *HCS) FinalizeAndAssemble(chain consensus.ChainReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (*types.Block, error) {
 	// No block rewards in PoA, so the state remains as is and uncles are dropped
 	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
+	log.Info("FINALIZEANDASSEMBLE", "blockNumber", header.Number.Uint64(), "stateRoot", header.Root)
 	header.UncleHash = types.CalcUncleHash(nil)
 
 	// Assemble and return the final block for sealing

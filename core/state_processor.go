@@ -24,6 +24,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 )
 
@@ -68,7 +69,9 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
 		statedb.Prepare(tx.Hash(), block.Hash(), i)
+		//log.Info("before apply transaction", "stateRoot", statedb.IntermediateRoot(true), "transaction", tx.Hash())
 		receipt, err := ApplyTransaction(p.config, p.bc, nil, gp, statedb, header, tx, usedGas, cfg)
+		//log.Info("after apply transaction", "stateRoot", statedb.IntermediateRoot(true), "transaction", tx.Hash())
 		if err != nil {
 			return nil, nil, 0, err
 		}
@@ -77,6 +80,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	}
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
 	p.engine.Finalize(p.bc, header, statedb, block.Transactions(), block.Uncles())
+	//log.Info("PROCESS", "header", header)
 
 	return receipts, allLogs, *usedGas, nil
 }
@@ -86,22 +90,30 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 // for the transaction, gas used and an error if the transaction failed,
 // indicating the block was invalid.
 func ApplyTransaction(config *params.ChainConfig, bc ChainContext, author *common.Address, gp *GasPool, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64, cfg vm.Config) (*types.Receipt, error) {
+	//log.Info("", "statedb", statedb)
+	//log.Info("", "bc context", bc)
+	//log.Info("", "vm config", cfg)
+	//log.Info("before applying transaction", "stateRoot", statedb.IntermediateRoot(true), "transaction", tx.Hash())
 	msg, err := tx.AsMessage(types.MakeSigner(config, header.Number))
 	if err != nil {
 		return nil, err
 	}
+	//log.Info("APPLY TXN", "msg", fmt.Sprintf("%s", msg))
 	// Create a new context to be used in the EVM environment
+	log.Info("STATE PROCESSOR", "header", header)
 	context := NewEVMContext(msg, header, bc, author)
 	// Create a new environment which holds all relevant information
 	// about the transaction and calling mechanisms.
 	vmenv := vm.NewEVM(context, statedb, config, cfg)
+	log.Info("after applying transaction", "stateRoot", statedb.IntermediateRoot(true), "transaction", tx.Hash())
 	// Apply the transaction to the current state (included in the env)
-	_, gas, failed, err := ApplyMessage(vmenv, msg, gp)
+	_, gas, failed, err := ApplyMessage2(vmenv, msg, gp, statedb)
 	if err != nil {
 		return nil, err
 	}
 	// Update the state with pending changes
 	var root []byte
+	log.Info("after applying transaction", "stateRoot", statedb.IntermediateRoot(true), "transaction", tx.Hash())
 	if config.IsByzantium(header.Number) {
 		statedb.Finalise(true)
 	} else {

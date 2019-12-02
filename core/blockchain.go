@@ -1607,6 +1607,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 			parent = bc.GetHeader(block.ParentHash(), block.NumberU64()-1)
 		}
 		statedb, err := state.New(parent.Root, bc.stateCache)
+		//log.Info("before INSERT BLOCK", "root hash", parent.Root.Hex())
 		if err != nil {
 			return it.index, events, coalescedLogs, err
 		}
@@ -1629,7 +1630,9 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		}
 		// Process block using the parent state as reference point
 		substart := time.Now()
+		//log.Info("before PROCESS", "stateRoot", statedb.IntermediateRoot(true))
 		receipts, logs, usedGas, err := bc.processor.Process(block, statedb, bc.vmConfig)
+		//log.Info("after PROCESS state root", "root hash", statedb.IntermediateRoot(true))
 		if err != nil {
 			bc.reportBlock(block, receipts, err)
 			atomic.StoreUint32(&followupInterrupt, 1)

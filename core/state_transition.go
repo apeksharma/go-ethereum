@@ -18,6 +18,7 @@ package core
 
 import (
 	"errors"
+	"github.com/ethereum/go-ethereum/core/state"
 	"math"
 	"math/big"
 
@@ -136,6 +137,10 @@ func ApplyMessage(evm *vm.EVM, msg Message, gp *GasPool) ([]byte, uint64, bool, 
 	return NewStateTransition(evm, msg, gp).TransitionDb()
 }
 
+func ApplyMessage2(evm *vm.EVM, msg Message, gp *GasPool, db *state.StateDB) ([]byte, uint64, bool, error) {
+	return NewStateTransition(evm, msg, gp).TransitionDb2(db)
+}
+
 // to returns the recipient of the message.
 func (st *StateTransition) to() common.Address {
 	if st.msg == nil || st.msg.To() == nil /* contract creation */ {
@@ -179,6 +184,62 @@ func (st *StateTransition) preCheck() error {
 		}
 	}
 	return st.buyGas()
+}
+func (st *StateTransition) TransitionDb2(db *state.StateDB) (ret []byte, usedGas uint64, failed bool, err error) {
+	if err = st.preCheck(); err != nil {
+		return
+	}
+	//log.Info("1", "stateRoot", db.IntermediateRoot(true))
+	msg := st.msg
+	sender := vm.AccountRef(msg.From())
+	homestead := st.evm.ChainConfig().IsHomestead(st.evm.BlockNumber)
+	istanbul := st.evm.ChainConfig().IsIstanbul(st.evm.BlockNumber)
+	contractCreation := msg.To() == nil
+	//log.Info("2", "stateRoot", db.IntermediateRoot(true))
+
+	// Pay intrinsic gas
+	gas, err := IntrinsicGas(st.data, contractCreation, homestead, istanbul)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	if err = st.useGas(gas); err != nil {
+		return nil, 0, false, err
+	}
+	//log.Info("3", "stateRoot", db.IntermediateRoot(true))
+
+	var (
+		evm = st.evm
+		// vm errors do not effect consensus and are therefor
+		// not assigned to err, except for insufficient balance
+		// error.
+		vmerr error
+	)
+	//log.Info("4", "stateRoot", db.IntermediateRoot(true))
+	if contractCreation {
+		ret, _, st.gas, vmerr = evm.Create(sender, st.data, st.gas, st.value)
+	} else {
+		// Increment the nonce for the next transaction
+		st.state.SetNonce(msg.From(), st.state.GetNonce(sender.Address())+1)
+		ret, st.gas, vmerr = evm.Call(sender, st.to(), st.data, st.gas, st.value)
+	}
+	//log.Info("5", "stateRoot", db.IntermediateRoot(true))
+	if vmerr != nil {
+		log.Debug("VM returned with error", "err", vmerr)
+		// The only possible consensus-error would be if there wasn't
+		// sufficient balance to make the transfer happen. The first
+		// balance transfer may never fail.
+		if vmerr == vm.ErrInsufficientBalance {
+			return nil, 0, false, vmerr
+		}
+	}
+	st.refundGas()
+	log.Info("6", "stateRoot", db.IntermediateRoot(true))
+	var balance = new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), st.gasPrice)
+	log.Info("", "coinbase", st.evm.Coinbase, "balance", balance )
+	st.state.AddBalance(st.evm.Coinbase, balance)
+	log.Info("7", "stateRoot", db.IntermediateRoot(true))
+
+	return ret, st.gasUsed(), vmerr != nil, err
 }
 
 // TransitionDb will transition the state by applying the current message and
